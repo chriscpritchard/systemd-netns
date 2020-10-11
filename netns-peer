@@ -1,0 +1,84 @@
+#!/bin/bash
+
+usage()
+{
+	echo "Usage: $0 [-u BRIDGE_IF [-m MAC] | -d] -n NS_NAME"
+	exit 2
+}
+
+validate_mac()
+{
+	local mac=$1
+	if [[ "$mac" =~ ^([0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}$ ]]; then
+		return 1
+	else
+		echo "Error: $mac is not a valid MAC address"
+		usage
+	fi
+}
+
+set_variable()
+{
+	local varname=$1
+	shift
+	if [ -z "${!varname}" ]; then
+		eval "$varname=\"$@\""
+	else
+		echo "Error: $varname already set"
+		usage
+  	fi
+}
+
+ns_up()
+{
+	local name=${1}
+	local bridge_if=${2}
+	local mac=${3}
+	echo "Seting up network in namespace ${name} on interface ${bridge_if}"
+	ip link add veth-${name} type veth peer name vpeer-${name}
+	if [[ "$mac" ]]; then
+		echo "Using custom MAC address: $mac"
+		ip link set dev vpeer-${name} address ${mac}
+	fi
+	ip link set vpeer-${name} netns ${name}
+	ip link set veth-${name} master ${bridge_if}
+	ip link set veth-${name} up
+	ip netns exec ${name} dhclient --no-pid vpeer-${name}
+	ip netns exec ${name} ip link set vpeer-${name} up
+	ip netns exec ${name} ip link set lo up
+}
+
+ns_down()
+{
+	local name=${1}
+	echo "removing network in namespace ${name}"
+	ip netns exec ${name} ip link set vpeer-${name} down
+	ip netns exec ${name} ip link set lo down
+	ip netns exec ${name} ip link delete vpeer-${name}
+	ip link set veth-${name} down
+	ip link delete veth-${name}
+}
+
+unset ACTION BRIDGE_IF NAME MAC
+
+while getopts 'u:dn:m:' c
+do
+	case $c in
+		u) set_variable ACTION UP
+		   set_variable BRIDGE_IF $OPTARG;;
+		d) set_variable ACTION DOWN ;;
+		n) set_variable NAME $OPTARG ;;
+		m) set_variable MAC $OPTARG ;;
+	esac
+done
+
+[ -z "$ACTION" ] || [ -z "$NAME" ] && usage
+[ "$ACTION" == "DOWN" ] && [ "$MAC" ] && usage
+[ "$MAC" ] && validate_mac $MAC
+
+case $ACTION in
+	UP)
+		ns_up $NAME $BRIDGE_IF $MAC;;
+	DOWN)
+		ns_down $NAME;;
+esac

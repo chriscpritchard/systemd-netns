@@ -1,0 +1,14 @@
+[Unit]
+Description=Create Peer to Named network namespace %i
+Requires=netns@%i.service
+After=netns@%i.service
+BindsTo=netns@%i.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+
+# Environment File containing address and optional arguments
+EnvironmentFile=/etc/systemd/netns-%i.conf
+ExecStart=netns-peer -u ${BRIDGE_IF} -n %i ${OPT_ARGS}
+ExecStop=netns-peer -d -n %i
